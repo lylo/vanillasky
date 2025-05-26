@@ -33,15 +33,20 @@ class VanillaSky
     end
 
     posts = @delete_posts ? fetch_old_posts : []
+    reposts = (@delete_posts && @delete_reposts) ? fetch_old_reposts : []
     likes = @delete_likes ? fetch_old_likes : []
 
-    if posts.empty? && likes.empty?
+    if posts.empty? && reposts.empty? && likes.empty?
       puts "✅ No content older than #{@days_threshold} days found."
       return
     end
 
     if !posts.empty?
       puts "📋 Found #{posts.length} posts older than #{@days_threshold} days"
+    end
+
+    if !reposts.empty?
+      puts "🔄 Found #{reposts.length} reposts older than #{@days_threshold} days"
     end
 
     if !likes.empty?
@@ -58,6 +63,7 @@ class VanillaSky
     end
 
     delete_posts(posts) unless posts.empty?
+    delete_reposts(reposts) unless reposts.empty?
     delete_likes(likes) unless likes.empty?
   end
 
@@ -246,6 +252,59 @@ class VanillaSky
     old_likes
   end
 
+  def fetch_old_reposts
+    cutoff_date = Date.today - @days_threshold
+    old_reposts = []
+    cursor = nil
+
+    puts "🔍 Scanning for reposts older than #{cutoff_date}..."
+
+    loop do
+      uri = URI("#{API_BASE}/com.atproto.repo.listRecords")
+      params = {
+        repo: @did,
+        collection: 'app.bsky.feed.repost',
+        limit: 100
+      }
+      params[:cursor] = cursor if cursor
+
+      uri.query = URI.encode_www_form(params)
+
+      http = Net::HTTP.new(uri.host, uri.port)
+      http.use_ssl = true
+
+      request = Net::HTTP::Get.new(uri)
+      request['Authorization'] = "Bearer #{@access_token}"
+
+      response = http.request(request)
+
+      if response.code != '200'
+        puts "❌ Failed to fetch reposts: #{response.body}"
+        break
+      end
+
+      data = JSON.parse(response.body)
+
+      data['records'].each do |record|
+        created_at = DateTime.parse(record['value']['createdAt'])
+        if created_at.to_date <= cutoff_date
+          old_reposts << {
+            uri: record['uri'],
+            created_at: created_at
+          }
+        end
+      end
+
+      cursor = data['cursor']
+      break unless cursor
+
+      print "."
+    end
+
+    puts
+    old_reposts
+  end
+
   def delete_posts(posts)
     deleted_count = 0
 
@@ -298,6 +357,32 @@ class VanillaSky
     end
   end
 
+  def delete_reposts(reposts)
+    deleted_count = 0
+
+    reposts.each_with_index do |repost, index|
+      if @dry_run
+        puts "[DRY RUN] Would delete repost from: #{repost[:created_at].strftime('%Y-%m-%d')}"
+      else
+        if delete_repost(repost[:uri])
+          deleted_count += 1
+          puts "🗑️  Deleted repost (#{index + 1}/#{reposts.length}): #{repost[:created_at].strftime('%Y-%m-%d')}"
+        else
+          puts "❌ Failed to delete repost: #{repost[:created_at].strftime('%Y-%m-%d')}"
+        end
+
+        # Rate limiting - sleep briefly between deletions
+        sleep(0.5)
+      end
+    end
+
+    if @dry_run
+      puts "🔍 DRY RUN: Would have deleted #{reposts.length} reposts"
+    else
+      puts "✅ Successfully deleted #{deleted_count} out of #{reposts.length} reposts"
+    end
+  end
+
   def delete_post(post_uri)
     # Extract the rkey from the URI
     rkey = post_uri.split('/').last
@@ -333,6 +418,27 @@ class VanillaSky
     request.body = {
       repo: @did,
       collection: 'app.bsky.feed.like',
+      rkey: rkey
+    }.to_json
+
+    response = http.request(request)
+    response.code == '200'
+  end
+
+  def delete_repost(repost_uri)
+    # Extract the rkey from the URI
+    rkey = repost_uri.split('/').last
+
+    uri = URI("#{API_BASE}/com.atproto.repo.deleteRecord")
+    http = Net::HTTP.new(uri.host, uri.port)
+    http.use_ssl = true
+
+    request = Net::HTTP::Post.new(uri)
+    request['Authorization'] = "Bearer #{@access_token}"
+    request['Content-Type'] = 'application/json'
+    request.body = {
+      repo: @did,
+      collection: 'app.bsky.feed.repost',
       rkey: rkey
     }.to_json
 

@@ -69,4 +69,15 @@ class VanillaSkyTest < Minitest::Test
     end
     assert_equal 'abc123', @vs.delete_post('at://did:example:123/app.bsky.feed.post/abc123')
   end
+
+  def test_delete_repost_extracts_rkey
+    # Mocks network interaction
+    @vs.instance_variable_set(:@access_token, 'token')
+    @vs.instance_variable_set(:@did, 'did:example:123')
+    def @vs.delete_repost(repost_uri)
+      rkey = repost_uri.split('/').last
+      rkey
+    end
+    assert_equal 'abc123', @vs.delete_repost('at://did:example:123/app.bsky.feed.repost/abc123')
+  end
 end
