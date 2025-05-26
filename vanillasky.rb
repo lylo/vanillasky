@@ -15,31 +15,41 @@ class VanillaSky
     @did = nil
     @days_threshold = 90
     @dry_run = true  # Default to dry run for safety
+    @delete_reposts = true  # Delete reposts by default
+    @delete_likes = false   # Don't delete likes by default
+    @delete_posts = true    # Delete posts by default
   end
 
   def run(args)
     parse_options(args)
 
-    puts "🌌 VanillaSky - Bluesky Post Auto-Deletion Tool"
-    puts "============================================="
+    puts "🌌 VanillaSky - Bluesky Skeet Auto-Delete"
+    puts "========================================="
 
     authenticate
 
     if @dry_run
-      puts "🔍 DRY RUN MODE - No posts will be deleted"
+      puts "🔍 DRY RUN MODE - Nothing will be deleted"
     end
 
-    posts = fetch_old_posts
+    posts = @delete_posts ? fetch_old_posts : []
+    likes = @delete_likes ? fetch_old_likes : []
 
-    if posts.empty?
-      puts "✅ No posts older than #{@days_threshold} days found."
+    if posts.empty? && likes.empty?
+      puts "✅ No content older than #{@days_threshold} days found."
       return
     end
 
-    puts "📋 Found #{posts.length} posts older than #{@days_threshold} days"
+    if !posts.empty?
+      puts "📋 Found #{posts.length} posts older than #{@days_threshold} days"
+    end
+
+    if !likes.empty?
+      puts "👍 Found #{likes.length} likes older than #{@days_threshold} days"
+    end
 
     unless @dry_run
-      puts "⚠️  This will permanently delete these posts. Continue? (y/N)"
+      puts "⚠️  This will permanently delete these items. Continue? (y/N)"
       response = STDIN.gets.chomp.downcase
       unless response == 'y' || response == 'yes'
         puts "❌ Cancelled."
@@ -47,7 +57,8 @@ class VanillaSky
       end
     end
 
-    delete_posts(posts)
+    delete_posts(posts) unless posts.empty?
+    delete_likes(likes) unless likes.empty?
   end
 
   private
@@ -66,6 +77,19 @@ class VanillaSky
 
       opts.on("-f", "--force", "Actually delete posts (required to disable dry-run mode)") do
         @dry_run = false
+      end
+
+      opts.on("--no-reposts", "Don't delete reposts") do
+        @delete_reposts = false
+      end
+
+      opts.on("--likes", "Also delete likes") do
+        @delete_likes = true
+      end
+
+      opts.on("--only-likes", "Only delete likes (don't delete posts)") do
+        @delete_likes = true
+        @delete_posts = false
       end
 
       opts.on("-h", "--help", "Show this help message") do
@@ -169,6 +193,59 @@ class VanillaSky
     old_posts
   end
 
+  def fetch_old_likes
+    cutoff_date = Date.today - @days_threshold
+    old_likes = []
+    cursor = nil
+
+    puts "🔍 Scanning for likes older than #{cutoff_date}..."
+
+    loop do
+      uri = URI("#{API_BASE}/com.atproto.repo.listRecords")
+      params = {
+        repo: @did,
+        collection: 'app.bsky.feed.like',
+        limit: 100
+      }
+      params[:cursor] = cursor if cursor
+
+      uri.query = URI.encode_www_form(params)
+
+      http = Net::HTTP.new(uri.host, uri.port)
+      http.use_ssl = true
+
+      request = Net::HTTP::Get.new(uri)
+      request['Authorization'] = "Bearer #{@access_token}"
+
+      response = http.request(request)
+
+      if response.code != '200'
+        puts "❌ Failed to fetch likes: #{response.body}"
+        break
+      end
+
+      data = JSON.parse(response.body)
+
+      data['records'].each do |record|
+        created_at = DateTime.parse(record['value']['createdAt'])
+        if created_at.to_date <= cutoff_date
+          old_likes << {
+            uri: record['uri'],
+            created_at: created_at
+          }
+        end
+      end
+
+      cursor = data['cursor']
+      break unless cursor
+
+      print "."
+    end
+
+    puts
+    old_likes
+  end
+
   def delete_posts(posts)
     deleted_count = 0
 
@@ -195,6 +272,32 @@ class VanillaSky
     end
   end
 
+  def delete_likes(likes)
+    deleted_count = 0
+
+    likes.each_with_index do |like, index|
+      if @dry_run
+        puts "[DRY RUN] Would delete like from: #{like[:created_at].strftime('%Y-%m-%d')}"
+      else
+        if delete_like(like[:uri])
+          deleted_count += 1
+          puts "🗑️  Deleted like (#{index + 1}/#{likes.length}): #{like[:created_at].strftime('%Y-%m-%d')}"
+        else
+          puts "❌ Failed to delete like: #{like[:created_at].strftime('%Y-%m-%d')}"
+        end
+
+        # Rate limiting - sleep briefly between deletions
+        sleep(0.5)
+      end
+    end
+
+    if @dry_run
+      puts "🔍 DRY RUN: Would have deleted #{likes.length} likes"
+    else
+      puts "✅ Successfully deleted #{deleted_count} out of #{likes.length} likes"
+    end
+  end
+
   def delete_post(post_uri)
     # Extract the rkey from the URI
     rkey = post_uri.split('/').last
@@ -209,6 +312,27 @@ class VanillaSky
     request.body = {
       repo: @did,
       collection: 'app.bsky.feed.post',
+      rkey: rkey
+    }.to_json
+
+    response = http.request(request)
+    response.code == '200'
+  end
+
+  def delete_like(like_uri)
+    # Extract the rkey from the URI
+    rkey = like_uri.split('/').last
+
+    uri = URI("#{API_BASE}/com.atproto.repo.deleteRecord")
+    http = Net::HTTP.new(uri.host, uri.port)
+    http.use_ssl = true
+
+    request = Net::HTTP::Post.new(uri)
+    request['Authorization'] = "Bearer #{@access_token}"
+    request['Content-Type'] = 'application/json'
+    request.body = {
+      repo: @did,
+      collection: 'app.bsky.feed.like',
       rkey: rkey
     }.to_json
 

@@ -12,6 +12,9 @@ class VanillaSkyTest < Minitest::Test
     assert_nil @vs.instance_variable_get(:@did)
     assert_equal 90, @vs.instance_variable_get(:@days_threshold)
     assert_equal true, @vs.instance_variable_get(:@dry_run)
+    assert_equal true, @vs.instance_variable_get(:@delete_reposts)
+    assert_equal false, @vs.instance_variable_get(:@delete_likes)
+    assert_equal true, @vs.instance_variable_get(:@delete_posts)
   end
 
   def test_parse_options_days
@@ -37,6 +40,23 @@ class VanillaSkyTest < Minitest::Test
         @vs.send(:parse_options, ['-h'])
       end
     end
+  end
+
+  def test_parse_options_no_reposts
+    @vs.send(:parse_options, ['--no-reposts'])
+    assert_equal false, @vs.instance_variable_get(:@delete_reposts)
+  end
+
+  def test_parse_options_likes
+    @vs.send(:parse_options, ['--likes'])
+    assert_equal true, @vs.instance_variable_get(:@delete_likes)
+    assert_equal true, @vs.instance_variable_get(:@delete_posts)
+  end
+
+  def test_parse_options_only_likes
+    @vs.send(:parse_options, ['--only-likes'])
+    assert_equal true, @vs.instance_variable_get(:@delete_likes)
+    assert_equal false, @vs.instance_variable_get(:@delete_posts)
   end
 
   def test_delete_post_extracts_rkey

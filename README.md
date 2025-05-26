@@ -5,6 +5,8 @@ A Ruby script to auto-delete posts from your Bluesky account.
 ## Features
 
 - 🗑️ Automatically deletes posts older than a specified number of days (default: 90 days)
+- 🔄 Deletes reposts by default (can be disabled)
+- 👍 Option to delete likes (disabled by default)
 - 🔍 Default dry-run mode previews what would be deleted
 - ⚡ Configurable timeframe
 - 🔐 Secure authentication using Bluesky app passwords
@@ -20,44 +22,65 @@ A Ruby script to auto-delete posts from your Bluesky account.
 
 1. Clone or download this repository
 2. Install dependencies:
+
    ```bash
    bundle install
    ```
+
 3. Make the script executable:
+
    ```bash
    chmod +x vanillasky.rb
    ```
 
 ## Usage
 
+### Show usage information
+
+```bash
+./vanillasky.rb --help
+```
+
 ### Basic usage (dry run - shows what would be deleted)
+
 ```bash
 ./vanillasky.rb
 ```
 
-### Actually delete posts (requires force flag for safety)
+### Actually delete posts (requires force flag to prevent unfortunate accidents)
+
 ```bash
 ./vanillasky.rb --force
 ```
 
 ### Custom timeframe (e.g., delete posts older than 30 days)
+
 ```bash
 ./vanillasky.rb --days 30 --force
 ```
 
-### Dry run (preview what would be deleted without actually deleting - the default)
+### Also delete likes (by default, only posts and reposts are deleted)
+
 ```bash
-./vanillasky.rb --dry-run
+./vanillasky.rb --likes --force
 ```
 
-### Help
+### Only delete likes (skip posts entirely)
+
 ```bash
-./vanillasky.rb --help
+./vanillasky.rb --only-likes --force
+```
+
+### Only delete original posts (skip reposts)
+
+```bash
+./vanillasky.rb --no-reposts --force
 ```
 
 ## Authentication
 
 When you run the script, you'll be prompted for:
+
 1. Your Bluesky handle (e.g., `username.bsky.social`)
 2. Your app password (not your main account password!)
 
@@ -97,6 +120,9 @@ Enter your app password:
 - `-d, --days DAYS`: Delete posts older than DAYS (default: 90)
 - `-n, --dry-run`: Show what would be deleted without actually deleting (default)
 - `-f, --force`: Actually delete posts (required to disable dry-run mode)
+- `--no-reposts`: Don't delete reposts (by default, reposts are deleted)
+- `--likes`: Also delete likes (by default, likes are not deleted)
+- `--only-likes`: Only delete likes (don't delete posts)
 - `-h, --help`: Show help message
 
 ## How It Works
@@ -116,8 +142,7 @@ Enter your app password:
 
 ## Limitations
 
-- Only deletes your own posts (not reposts or likes)
-- Processes posts sequentially to respect rate limits
+- Processes content sequentially to respect rate limits
 - Requires manual confirmation for each run (safety feature)
 
 ## Contributing
