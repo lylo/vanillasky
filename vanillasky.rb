@@ -22,6 +22,7 @@ class VanillaSky
     @delete_replies = false
     @specific_ids = []      # Specific IDs to delete
     @exclude_ids = []       # IDs to exclude from deletion
+    @start_date = nil       # Don't delete anything before this date
   end
 
   def run(args)
@@ -38,6 +39,10 @@ class VanillaSky
 
     if @exclude_ids.any?
       puts "🚫 Excluding #{@exclude_ids.length} IDs from deletion: #{@exclude_ids.join(', ')}"
+    end
+
+    if @start_date
+      puts "📅 Not deleting anything before #{@start_date.strftime('%Y-%m-%d')}"
     end
 
     if @specific_ids.any?
@@ -141,6 +146,15 @@ class VanillaSky
 
       opts.on("-d", "--days DAYS", Integer, "Delete content older than DAYS (default: 90)") do |days|
         @days_threshold = days
+      end
+
+      opts.on("-s", "--start-date DATE", "Don't delete anything before this date (YYYY-MM-DD)") do |date|
+        begin
+          @start_date = Date.parse(date)
+        rescue Date::Error
+          puts "❌ Error: Invalid date format. Use YYYY-MM-DD (e.g., 2024-01-01)"
+          exit 1
+        end
       end
 
       opts.on("-n", "--dry-run", "Show what would be deleted without actually deleting (default)") do
@@ -261,7 +275,9 @@ class VanillaSky
         rkey = record['uri'].split('/').last
         is_reply = record['value']['reply'] != nil
 
-        if created_at.to_date <= cutoff_date && !@exclude_ids.include?(rkey) && !is_reply
+        if created_at.to_date <= cutoff_date && !@exclude_ids.include?(rkey) &&
+           (@start_date.nil? || created_at.to_date >= @start_date) && !is_reply &&
+           (@start_date.nil? || created_at.to_date >= @start_date)
           old_posts << {
             uri: record['uri'],
             created_at: created_at,
@@ -318,7 +334,9 @@ class VanillaSky
         rkey = record['uri'].split('/').last
         is_reply = record['value']['reply'] != nil
 
-        if created_at.to_date <= cutoff_date && !@exclude_ids.include?(rkey) && is_reply
+        if created_at.to_date <= cutoff_date && !@exclude_ids.include?(rkey) &&
+           (@start_date.nil? || created_at.to_date >= @start_date) && is_reply &&
+           (@start_date.nil? || created_at.to_date >= @start_date)
           old_replies << {
             uri: record['uri'],
             created_at: created_at,
@@ -373,7 +391,8 @@ class VanillaSky
       data['records'].each do |record|
         created_at = DateTime.parse(record['value']['createdAt'])
         rkey = record['uri'].split('/').last
-        if created_at.to_date <= cutoff_date && !@exclude_ids.include?(rkey)
+        if created_at.to_date <= cutoff_date && !@exclude_ids.include?(rkey) &&
+           (@start_date.nil? || created_at.to_date >= @start_date)
           old_likes << {
             uri: record['uri'],
             created_at: created_at
@@ -427,7 +446,8 @@ class VanillaSky
       data['records'].each do |record|
         created_at = DateTime.parse(record['value']['createdAt'])
         rkey = record['uri'].split('/').last
-        if created_at.to_date <= cutoff_date && !@exclude_ids.include?(rkey)
+        if created_at.to_date <= cutoff_date && !@exclude_ids.include?(rkey) &&
+           (@start_date.nil? || created_at.to_date >= @start_date)
           old_reposts << {
             uri: record['uri'],
             created_at: created_at
@@ -723,6 +743,7 @@ class VanillaSky
     puts ""
     puts "Options:"
     puts "  -d, --days DAYS                  Delete content older than DAYS (default: 90)"
+    puts "  -s, --start-date DATE            Don't delete anything before this date (YYYY-MM-DD)"
     puts "  -n, --dry-run                    Show what would be deleted without actually deleting (default)"
     puts "  -f, --force                      Actually delete content (required to disable dry-run mode)"
     puts "      --ids ID1,ID2,ID3            Delete only specific IDs of the specified type (comma-separated rkeys)"
@@ -731,9 +752,10 @@ class VanillaSky
     puts "  -v, --version                    Show version"
     puts ""
     puts "Examples:"
-    puts "  #{$0} posts likes -n             # Show old posts and likes (dry run)"
-    puts "  #{$0} replies --days 30 -f       # Delete replies older than 30 days"
-    puts "  #{$0} likes --ids abc123,def456  # Delete only specific like IDs"
+    puts "  #{$0} posts likes -n                           # Show old posts and likes (dry run)"
+    puts "  #{$0} replies --days 30 -f                     # Delete replies older than 30 days"
+    puts "  #{$0} posts --start-date 2024-01-01 -f         # Delete posts but keep everything since 2024"
+    puts "  #{$0} likes --ids abc123,def456                # Delete only specific like IDs"
   end
 end
 
