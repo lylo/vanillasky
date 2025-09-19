@@ -166,11 +166,11 @@ class VanillaSky
       end
 
       opts.on("--ids ID1,ID2,ID3", Array, "Delete only specific IDs of the specified type (comma-separated rkeys)") do |ids|
-        @specific_ids = ids
+        @specific_ids = ids.map(&:strip)
       end
 
       opts.on("--exclude-ids ID1,ID2,ID3", Array, "Exclude specific IDs from deletion (comma-separated rkeys)") do |ids|
-        @exclude_ids = ids
+        @exclude_ids = ids.map(&:strip)
       end
 
       opts.on("-h", "--help", "Show this help message") do
