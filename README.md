@@ -204,6 +204,7 @@ If no environment variables are set, you'll be prompted for:
 
 ## Version History
 
+- **v0.2.1**: Fix SSL certificate CRL verification errors on Ruby 3.4+
 - **v0.2**: Command-based interface, replies support, exclude-ids functionality
 - **v0.1**: Original flag-based interface
 

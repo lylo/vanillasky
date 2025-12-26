@@ -6,9 +6,10 @@ require 'uri'
 require 'date'
 require 'optparse'
 require 'dotenv/load'
+require 'openssl'
 
 class VanillaSky
-  VERSION = '0.2'
+  VERSION = '0.2.1'
   API_BASE = 'https://bsky.social/xrpc'
 
   def initialize
@@ -91,6 +92,18 @@ class VanillaSky
   end
 
   private
+
+  def create_http(uri)
+    http = Net::HTTP.new(uri.host, uri.port)
+    http.use_ssl = true
+    http.verify_mode = OpenSSL::SSL::VERIFY_PEER
+    # Disable CRL checking which can fail on some systems (especially Ruby 3.4+)
+    http.cert_store = OpenSSL::X509::Store.new.tap do |store|
+      store.set_default_paths
+      store.flags = OpenSSL::X509::V_FLAG_NO_CHECK_TIME
+    end
+    http
+  end
 
   def parse_command_and_options(args)
     # Handle version and help before anything else
@@ -214,8 +227,7 @@ class VanillaSky
     end
 
     uri = URI("#{API_BASE}/com.atproto.server.createSession")
-    http = Net::HTTP.new(uri.host, uri.port)
-    http.use_ssl = true
+    http = create_http(uri)
 
     request = Net::HTTP::Post.new(uri)
     request['Content-Type'] = 'application/json'
@@ -255,8 +267,7 @@ class VanillaSky
 
       uri.query = URI.encode_www_form(params)
 
-      http = Net::HTTP.new(uri.host, uri.port)
-      http.use_ssl = true
+      http = create_http(uri)
 
       request = Net::HTTP::Get.new(uri)
       request['Authorization'] = "Bearer #{@access_token}"
@@ -314,8 +325,7 @@ class VanillaSky
 
       uri.query = URI.encode_www_form(params)
 
-      http = Net::HTTP.new(uri.host, uri.port)
-      http.use_ssl = true
+      http = create_http(uri)
 
       request = Net::HTTP::Get.new(uri)
       request['Authorization'] = "Bearer #{@access_token}"
@@ -373,8 +383,7 @@ class VanillaSky
 
       uri.query = URI.encode_www_form(params)
 
-      http = Net::HTTP.new(uri.host, uri.port)
-      http.use_ssl = true
+      http = create_http(uri)
 
       request = Net::HTTP::Get.new(uri)
       request['Authorization'] = "Bearer #{@access_token}"
@@ -428,8 +437,7 @@ class VanillaSky
 
       uri.query = URI.encode_www_form(params)
 
-      http = Net::HTTP.new(uri.host, uri.port)
-      http.use_ssl = true
+      http = create_http(uri)
 
       request = Net::HTTP::Get.new(uri)
       request['Authorization'] = "Bearer #{@access_token}"
@@ -578,8 +586,7 @@ class VanillaSky
     rkey = post_uri.split('/').last
 
     uri = URI("#{API_BASE}/com.atproto.repo.deleteRecord")
-    http = Net::HTTP.new(uri.host, uri.port)
-    http.use_ssl = true
+    http = create_http(uri)
 
     request = Net::HTTP::Post.new(uri)
     request['Authorization'] = "Bearer #{@access_token}"
@@ -599,8 +606,7 @@ class VanillaSky
     rkey = like_uri.split('/').last
 
     uri = URI("#{API_BASE}/com.atproto.repo.deleteRecord")
-    http = Net::HTTP.new(uri.host, uri.port)
-    http.use_ssl = true
+    http = create_http(uri)
 
     request = Net::HTTP::Post.new(uri)
     request['Authorization'] = "Bearer #{@access_token}"
@@ -620,8 +626,7 @@ class VanillaSky
     rkey = repost_uri.split('/').last
 
     uri = URI("#{API_BASE}/com.atproto.repo.deleteRecord")
-    http = Net::HTTP.new(uri.host, uri.port)
-    http.use_ssl = true
+    http = create_http(uri)
 
     request = Net::HTTP::Post.new(uri)
     request['Authorization'] = "Bearer #{@access_token}"
@@ -700,8 +705,7 @@ class VanillaSky
     }
     uri.query = URI.encode_www_form(params)
 
-    http = Net::HTTP.new(uri.host, uri.port)
-    http.use_ssl = true
+    http = create_http(uri)
 
     request = Net::HTTP::Get.new(uri)
     request['Authorization'] = "Bearer #{@access_token}"
