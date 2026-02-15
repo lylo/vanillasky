@@ -8,31 +8,35 @@ require 'optparse'
 require 'dotenv/load'
 require 'openssl'
 
+require_relative 'bluesky_platform'
+require_relative 'mastodon_platform'
+
 class VanillaSky
-  VERSION = '0.2.1'
-  API_BASE = 'https://bsky.social/xrpc'
+  VERSION = '0.3.0'
 
   def initialize
-    @access_token = nil
-    @did = nil
+    @platform = nil
+    @platform_name = 'bluesky'
     @days_threshold = 90
-    @dry_run = true  # Default to dry run for safety
+    @dry_run = true
     @delete_reposts = false
     @delete_likes = false
     @delete_posts = false
     @delete_replies = false
-    @specific_ids = []      # Specific IDs to delete
-    @exclude_ids = []       # IDs to exclude from deletion
-    @start_date = nil       # Don't delete anything before this date
+    @specific_ids = []
+    @exclude_ids = []
+    @start_date = nil
   end
 
   def run(args)
     parse_command_and_options(args)
 
-    puts "🌌 VanillaSky - Bluesky Skeet Auto-Delete"
+    @platform = create_platform
+
+    puts "🌌 VanillaSky - #{@platform.platform_name} Auto-Delete"
     puts "========================================="
 
-    authenticate
+    @platform.authenticate
 
     if @dry_run
       puts "🔍 DRY RUN MODE - Nothing will be deleted"
@@ -46,13 +50,15 @@ class VanillaSky
       puts "📅 Not deleting anything before #{@start_date.strftime('%Y-%m-%d')}"
     end
 
+    cutoff_date = Date.today - @days_threshold
+
     if @specific_ids.any?
       posts, replies, reposts, likes = fetch_specific_items(@specific_ids)
     else
-      posts = @delete_posts ? fetch_old_posts : []
-      replies = @delete_replies ? fetch_old_replies : []
-      reposts = @delete_reposts ? fetch_old_reposts : []
-      likes = @delete_likes ? fetch_old_likes : []
+      posts = @delete_posts ? @platform.fetch_old_posts(cutoff_date, @start_date, @exclude_ids) : []
+      replies = @delete_replies ? @platform.fetch_old_replies(cutoff_date, @start_date, @exclude_ids) : []
+      reposts = @delete_reposts ? @platform.fetch_old_reposts(cutoff_date, @start_date, @exclude_ids) : []
+      likes = @delete_likes ? @platform.fetch_old_likes(cutoff_date, @start_date, @exclude_ids) : []
     end
 
     if posts.empty? && replies.empty? && reposts.empty? && likes.empty?
@@ -93,20 +99,20 @@ class VanillaSky
 
   private
 
-  def create_http(uri)
-    http = Net::HTTP.new(uri.host, uri.port)
-    http.use_ssl = true
-    http.verify_mode = OpenSSL::SSL::VERIFY_PEER
-    # Disable CRL checking which can fail on some systems (especially Ruby 3.4+)
-    http.cert_store = OpenSSL::X509::Store.new.tap do |store|
-      store.set_default_paths
-      store.flags = OpenSSL::X509::V_FLAG_NO_CHECK_TIME
+  def create_platform
+    case @platform_name
+    when 'bluesky'
+      BlueskyPlatform.new
+    when 'mastodon'
+      MastodonPlatform.new
+    else
+      puts "❌ Error: Unknown platform '#{@platform_name}'"
+      puts "   Valid platforms: bluesky, mastodon"
+      exit 1
     end
-    http
   end
 
   def parse_command_and_options(args)
-    # Handle version and help before anything else
     if args.include?('--version') || args.include?('-v')
       puts "VanillaSky #{VERSION}"
       exit 0
@@ -155,7 +161,11 @@ class VanillaSky
 
   def parse_options(args)
     OptionParser.new do |opts|
-      opts.banner = "Usage: #{$0} [posts|likes|reposts] [options]"
+      opts.banner = "Usage: #{$0} [posts|replies|likes|reposts] [options]"
+
+      opts.on("-p", "--platform PLATFORM", "Platform to use: bluesky (default), mastodon") do |platform|
+        @platform_name = platform.downcase
+      end
 
       opts.on("-d", "--days DAYS", Integer, "Delete content older than DAYS (default: 90)") do |days|
         @days_threshold = days
@@ -178,11 +188,11 @@ class VanillaSky
         @dry_run = false
       end
 
-      opts.on("--ids ID1,ID2,ID3", Array, "Delete only specific IDs of the specified type (comma-separated rkeys)") do |ids|
+      opts.on("--ids ID1,ID2,ID3", Array, "Delete only specific IDs of the specified type (comma-separated)") do |ids|
         @specific_ids = ids.map(&:strip)
       end
 
-      opts.on("--exclude-ids ID1,ID2,ID3", Array, "Exclude specific IDs from deletion (comma-separated rkeys)") do |ids|
+      opts.on("--exclude-ids ID1,ID2,ID3", Array, "Exclude specific IDs from deletion (comma-separated)") do |ids|
         @exclude_ids = ids.map(&:strip)
       end
 
@@ -197,7 +207,6 @@ class VanillaSky
       end
     end.parse!(args)
 
-    # Validate mutually exclusive options
     if @specific_ids.any? && @exclude_ids.any?
       puts "❌ Error: --ids and --exclude-ids options are mutually exclusive"
       puts "   Use --ids to delete only specific IDs, OR --exclude-ids to exclude IDs from normal deletion"
@@ -210,285 +219,78 @@ class VanillaSky
     end
   end
 
-  def authenticate
-    handle = ENV['BLUESKY_HANDLE']
-    password = ENV['BLUESKY_APP_PASSWORD']
+  def fetch_specific_items(ids)
+    posts = []
+    replies = []
+    reposts = []
+    likes = []
 
-    # Fall back to interactive input if not in environment
-    if handle.nil? || handle.empty?
-      print "Enter your Bluesky handle (e.g., user.bsky.social): "
-      handle = STDIN.gets.chomp
-    end
+    ids.each do |id|
+      found = false
 
-    if password.nil? || password.empty?
-      print "Enter your app password: "
-      password = STDIN.noecho(&:gets).chomp
-      puts
-    end
-
-    uri = URI("#{API_BASE}/com.atproto.server.createSession")
-    http = create_http(uri)
-
-    request = Net::HTTP::Post.new(uri)
-    request['Content-Type'] = 'application/json'
-    request.body = {
-      identifier: handle,
-      password: password
-    }.to_json
-
-    response = http.request(request)
-
-    if response.code == '200'
-      data = JSON.parse(response.body)
-      @access_token = data['accessJwt']
-      @did = data['did']
-      puts "✅ Successfully authenticated as #{handle}"
-    else
-      puts "❌ Authentication failed: #{response.body}"
-      exit 1
-    end
-  end
-
-  def fetch_old_posts
-    cutoff_date = Date.today - @days_threshold
-    old_posts = []
-    cursor = nil
-
-    puts "🔍 Scanning for posts older than #{cutoff_date}..."
-
-    loop do
-      uri = URI("#{API_BASE}/com.atproto.repo.listRecords")
-      params = {
-        repo: @did,
-        collection: 'app.bsky.feed.post',
-        limit: 100
-      }
-      params[:cursor] = cursor if cursor
-
-      uri.query = URI.encode_www_form(params)
-
-      http = create_http(uri)
-
-      request = Net::HTTP::Get.new(uri)
-      request['Authorization'] = "Bearer #{@access_token}"
-
-      response = http.request(request)
-
-      if response.code != '200'
-        puts "❌ Failed to fetch posts: #{response.body}"
-        break
+      if @exclude_ids.include?(id)
+        puts "🚫 Skipping excluded ID: #{id}"
+        next
       end
 
-      data = JSON.parse(response.body)
-
-      data['records'].each do |record|
-        created_at = DateTime.parse(record['value']['createdAt'])
-        rkey = record['uri'].split('/').last
-        is_reply = record['value']['reply'] != nil
-
-        if created_at.to_date <= cutoff_date && !@exclude_ids.include?(rkey) &&
-           (@start_date.nil? || created_at.to_date >= @start_date) && !is_reply &&
-           (@start_date.nil? || created_at.to_date >= @start_date)
-          old_posts << {
-            uri: record['uri'],
-            created_at: created_at,
-            text: record['value']['text']&.slice(0, 100)
-          }
+      if (@delete_posts || @delete_replies)
+        collection = @platform.collection_for_type(:post)
+        if item = @platform.fetch_record_by_id(id, collection)
+          is_reply = item[:reply] != nil
+          if @delete_posts && !is_reply
+            posts << item
+            found = true
+          elsif @delete_replies && is_reply
+            replies << item
+            found = true
+          end
         end
       end
 
-      cursor = data['cursor']
-      break unless cursor
-
-      print "."
-    end
-
-    puts
-    old_posts
-  end
-
-  def fetch_old_replies
-    cutoff_date = Date.today - @days_threshold
-    old_replies = []
-    cursor = nil
-
-    puts "🔍 Scanning for replies older than #{cutoff_date}..."
-
-    loop do
-      uri = URI("#{API_BASE}/com.atproto.repo.listRecords")
-      params = {
-        repo: @did,
-        collection: 'app.bsky.feed.post',
-        limit: 100
-      }
-      params[:cursor] = cursor if cursor
-
-      uri.query = URI.encode_www_form(params)
-
-      http = create_http(uri)
-
-      request = Net::HTTP::Get.new(uri)
-      request['Authorization'] = "Bearer #{@access_token}"
-
-      response = http.request(request)
-
-      if response.code != '200'
-        puts "❌ Failed to fetch replies: #{response.body}"
-        break
-      end
-
-      data = JSON.parse(response.body)
-
-      data['records'].each do |record|
-        created_at = DateTime.parse(record['value']['createdAt'])
-        rkey = record['uri'].split('/').last
-        is_reply = record['value']['reply'] != nil
-
-        if created_at.to_date <= cutoff_date && !@exclude_ids.include?(rkey) &&
-           (@start_date.nil? || created_at.to_date >= @start_date) && is_reply &&
-           (@start_date.nil? || created_at.to_date >= @start_date)
-          old_replies << {
-            uri: record['uri'],
-            created_at: created_at,
-            text: record['value']['text']&.slice(0, 100)
-          }
+      if @delete_reposts && !found
+        collection = @platform.collection_for_type(:repost)
+        if item = @platform.fetch_record_by_id(id, collection)
+          reposts << item
+          found = true
         end
       end
 
-      cursor = data['cursor']
-      break unless cursor
-
-      print "."
-    end
-
-    puts
-    old_replies
-  end
-
-  def fetch_old_likes
-    cutoff_date = Date.today - @days_threshold
-    old_likes = []
-    cursor = nil
-
-    puts "🔍 Scanning for likes older than #{cutoff_date}..."
-
-    loop do
-      uri = URI("#{API_BASE}/com.atproto.repo.listRecords")
-      params = {
-        repo: @did,
-        collection: 'app.bsky.feed.like',
-        limit: 100
-      }
-      params[:cursor] = cursor if cursor
-
-      uri.query = URI.encode_www_form(params)
-
-      http = create_http(uri)
-
-      request = Net::HTTP::Get.new(uri)
-      request['Authorization'] = "Bearer #{@access_token}"
-
-      response = http.request(request)
-
-      if response.code != '200'
-        puts "❌ Failed to fetch likes: #{response.body}"
-        break
-      end
-
-      data = JSON.parse(response.body)
-
-      data['records'].each do |record|
-        created_at = DateTime.parse(record['value']['createdAt'])
-        rkey = record['uri'].split('/').last
-        if created_at.to_date <= cutoff_date && !@exclude_ids.include?(rkey) &&
-           (@start_date.nil? || created_at.to_date >= @start_date)
-          old_likes << {
-            uri: record['uri'],
-            created_at: created_at
-          }
+      if @delete_likes && !found
+        collection = @platform.collection_for_type(:like)
+        if item = @platform.fetch_record_by_id(id, collection)
+          likes << item
+          found = true
         end
       end
 
-      cursor = data['cursor']
-      break unless cursor
-
-      print "."
+      unless found
+        types_checked = []
+        types_checked << 'posts' if @delete_posts
+        types_checked << 'replies' if @delete_replies
+        types_checked << 'reposts' if @delete_reposts
+        types_checked << 'likes' if @delete_likes
+        puts "⚠️  ID '#{id}' not found in #{types_checked.join(', ')} collections"
+      end
     end
 
-    puts
-    old_likes
-  end
-
-  def fetch_old_reposts
-    cutoff_date = Date.today - @days_threshold
-    old_reposts = []
-    cursor = nil
-
-    puts "🔍 Scanning for reposts older than #{cutoff_date}..."
-
-    loop do
-      uri = URI("#{API_BASE}/com.atproto.repo.listRecords")
-      params = {
-        repo: @did,
-        collection: 'app.bsky.feed.repost',
-        limit: 100
-      }
-      params[:cursor] = cursor if cursor
-
-      uri.query = URI.encode_www_form(params)
-
-      http = create_http(uri)
-
-      request = Net::HTTP::Get.new(uri)
-      request['Authorization'] = "Bearer #{@access_token}"
-
-      response = http.request(request)
-
-      if response.code != '200'
-        puts "❌ Failed to fetch reposts: #{response.body}"
-        break
-      end
-
-      data = JSON.parse(response.body)
-
-      data['records'].each do |record|
-        created_at = DateTime.parse(record['value']['createdAt'])
-        rkey = record['uri'].split('/').last
-        if created_at.to_date <= cutoff_date && !@exclude_ids.include?(rkey) &&
-           (@start_date.nil? || created_at.to_date >= @start_date)
-          old_reposts << {
-            uri: record['uri'],
-            created_at: created_at
-          }
-        end
-      end
-
-      cursor = data['cursor']
-      break unless cursor
-
-      print "."
-    end
-
-    puts
-    old_reposts
+    [posts, replies, reposts, likes]
   end
 
   def delete_posts(posts)
     deleted_count = 0
 
     posts.each_with_index do |post, index|
-      rkey = post[:uri].split('/').last
+      id = @platform.item_id(post)
       if @dry_run
-        puts "[DRY RUN] ID: #{rkey} | #{post[:created_at].strftime('%Y-%m-%d')} - #{post[:text]}"
+        puts "[DRY RUN] ID: #{id} | #{post[:created_at].strftime('%Y-%m-%d')} - #{post[:text]}"
       else
-        if delete_post(post[:uri])
+        if @platform.delete_post(post[:uri])
           deleted_count += 1
           puts "🗑️  Deleted (#{index + 1}/#{posts.length}): #{post[:created_at].strftime('%Y-%m-%d')} - #{post[:text]}"
         else
           puts "❌ Failed to delete: #{post[:created_at].strftime('%Y-%m-%d')} - #{post[:text]}"
         end
 
-        # Rate limiting - sleep briefly between deletions
         sleep(0.5)
       end
     end
@@ -504,18 +306,17 @@ class VanillaSky
     deleted_count = 0
 
     replies.each_with_index do |reply, index|
-      rkey = reply[:uri].split('/').last
+      id = @platform.item_id(reply)
       if @dry_run
-        puts "[DRY RUN] ID: #{rkey} | #{reply[:created_at].strftime('%Y-%m-%d')} - #{reply[:text]}"
+        puts "[DRY RUN] ID: #{id} | #{reply[:created_at].strftime('%Y-%m-%d')} - #{reply[:text]}"
       else
-        if delete_post(reply[:uri])
+        if @platform.delete_post(reply[:uri])
           deleted_count += 1
           puts "🗑️  Deleted reply (#{index + 1}/#{replies.length}): #{reply[:created_at].strftime('%Y-%m-%d')} - #{reply[:text]}"
         else
           puts "❌ Failed to delete reply: #{reply[:created_at].strftime('%Y-%m-%d')} - #{reply[:text]}"
         end
 
-        # Rate limiting - sleep briefly between deletions
         sleep(0.5)
       end
     end
@@ -531,18 +332,17 @@ class VanillaSky
     deleted_count = 0
 
     likes.each_with_index do |like, index|
-      rkey = like[:uri].split('/').last
+      id = @platform.item_id(like)
       if @dry_run
-        puts "[DRY RUN] ID: #{rkey} | Like from #{like[:created_at].strftime('%Y-%m-%d')}"
+        puts "[DRY RUN] ID: #{id} | Like from #{like[:created_at].strftime('%Y-%m-%d')}"
       else
-        if delete_like(like[:uri])
+        if @platform.delete_like(like[:uri])
           deleted_count += 1
           puts "🗑️  Deleted like (#{index + 1}/#{likes.length}): #{like[:created_at].strftime('%Y-%m-%d')}"
         else
           puts "❌ Failed to delete like: #{like[:created_at].strftime('%Y-%m-%d')}"
         end
 
-        # Rate limiting - sleep briefly between deletions
         sleep(0.5)
       end
     end
@@ -558,18 +358,17 @@ class VanillaSky
     deleted_count = 0
 
     reposts.each_with_index do |repost, index|
-      rkey = repost[:uri].split('/').last
+      id = @platform.item_id(repost)
       if @dry_run
-        puts "[DRY RUN] ID: #{rkey} | Repost from #{repost[:created_at].strftime('%Y-%m-%d')}"
+        puts "[DRY RUN] ID: #{id} | Repost from #{repost[:created_at].strftime('%Y-%m-%d')}"
       else
-        if delete_repost(repost[:uri])
+        if @platform.delete_repost(repost[:uri])
           deleted_count += 1
           puts "🗑️  Deleted repost (#{index + 1}/#{reposts.length}): #{repost[:created_at].strftime('%Y-%m-%d')}"
         else
           puts "❌ Failed to delete repost: #{repost[:created_at].strftime('%Y-%m-%d')}"
         end
 
-        # Rate limiting - sleep briefly between deletions
         sleep(0.5)
       end
     end
@@ -581,185 +380,37 @@ class VanillaSky
     end
   end
 
-  def delete_post(post_uri)
-    # Extract the rkey from the URI
-    rkey = post_uri.split('/').last
-
-    uri = URI("#{API_BASE}/com.atproto.repo.deleteRecord")
-    http = create_http(uri)
-
-    request = Net::HTTP::Post.new(uri)
-    request['Authorization'] = "Bearer #{@access_token}"
-    request['Content-Type'] = 'application/json'
-    request.body = {
-      repo: @did,
-      collection: 'app.bsky.feed.post',
-      rkey: rkey
-    }.to_json
-
-    response = http.request(request)
-    response.code == '200'
-  end
-
-  def delete_like(like_uri)
-    # Extract the rkey from the URI
-    rkey = like_uri.split('/').last
-
-    uri = URI("#{API_BASE}/com.atproto.repo.deleteRecord")
-    http = create_http(uri)
-
-    request = Net::HTTP::Post.new(uri)
-    request['Authorization'] = "Bearer #{@access_token}"
-    request['Content-Type'] = 'application/json'
-    request.body = {
-      repo: @did,
-      collection: 'app.bsky.feed.like',
-      rkey: rkey
-    }.to_json
-
-    response = http.request(request)
-    response.code == '200'
-  end
-
-  def delete_repost(repost_uri)
-    # Extract the rkey from the URI
-    rkey = repost_uri.split('/').last
-
-    uri = URI("#{API_BASE}/com.atproto.repo.deleteRecord")
-    http = create_http(uri)
-
-    request = Net::HTTP::Post.new(uri)
-    request['Authorization'] = "Bearer #{@access_token}"
-    request['Content-Type'] = 'application/json'
-    request.body = {
-      repo: @did,
-      collection: 'app.bsky.feed.repost',
-      rkey: rkey
-    }.to_json
-
-    response = http.request(request)
-    response.code == '200'
-  end
-
-  def fetch_specific_items(rkeys)
-    posts = []
-    replies = []
-    reposts = []
-    likes = []
-
-    rkeys.each do |rkey|
-      found = false
-
-      # Skip if this ID is in the exclude list
-      if @exclude_ids.include?(rkey)
-        puts "🚫 Skipping excluded ID: #{rkey}"
-        next
-      end
-
-      if (@delete_posts || @delete_replies)
-        if item = fetch_record_by_rkey(rkey, 'app.bsky.feed.post')
-          is_reply = item[:reply] != nil
-          if @delete_posts && !is_reply
-            posts << item
-            found = true
-          elsif @delete_replies && is_reply
-            replies << item
-            found = true
-          end
-        end
-      end
-
-      if @delete_reposts && !found
-        if item = fetch_record_by_rkey(rkey, 'app.bsky.feed.repost')
-          reposts << item
-          found = true
-        end
-      end
-
-      if @delete_likes && !found
-        if item = fetch_record_by_rkey(rkey, 'app.bsky.feed.like')
-          likes << item
-          found = true
-        end
-      end
-
-      unless found
-        types_checked = []
-        types_checked << 'posts' if @delete_posts
-        types_checked << 'replies' if @delete_replies
-        types_checked << 'reposts' if @delete_reposts
-        types_checked << 'likes' if @delete_likes
-        puts "⚠️  ID '#{rkey}' not found in #{types_checked.join(', ')} collections"
-      end
-    end
-
-    [posts, replies, reposts, likes]
-  end
-
-  def fetch_record_by_rkey(rkey, collection)
-    uri = URI("#{API_BASE}/com.atproto.repo.getRecord")
-    params = {
-      repo: @did,
-      collection: collection,
-      rkey: rkey
-    }
-    uri.query = URI.encode_www_form(params)
-
-    http = create_http(uri)
-
-    request = Net::HTTP::Get.new(uri)
-    request['Authorization'] = "Bearer #{@access_token}"
-
-    response = http.request(request)
-
-    if response.code == '200'
-      data = JSON.parse(response.body)
-      created_at = DateTime.parse(data['value']['createdAt'])
-      
-      result = {
-        uri: data['uri'],
-        created_at: created_at
-      }
-
-      # Add text for posts and capture reply field
-      if collection == 'app.bsky.feed.post'
-        result[:text] = data['value']['text']&.slice(0, 100)
-        result[:reply] = data['value']['reply']
-      end
-
-      result
-    else
-      nil
-    end
-  rescue => e
-    nil
-  end
-
   def show_usage
     puts "Usage: #{$0} [posts|replies|likes|reposts] [options]"
     puts ""
     puts "Commands:"
     puts "  posts     Delete posts (not replies)"
     puts "  replies   Delete replies"
-    puts "  likes     Delete likes"
-    puts "  reposts   Delete reposts"
+    puts "  likes     Delete likes / favourites"
+    puts "  reposts   Delete reposts / boosts"
     puts "  (You can specify multiple commands)"
     puts ""
     puts "Options:"
+    puts "  -p, --platform PLATFORM          Platform to use: bluesky (default), mastodon"
     puts "  -d, --days DAYS                  Delete content older than DAYS (default: 90)"
     puts "  -s, --start-date DATE            Don't delete anything before this date (YYYY-MM-DD)"
     puts "  -n, --dry-run                    Show what would be deleted without actually deleting (default)"
     puts "  -f, --force                      Actually delete content (required to disable dry-run mode)"
-    puts "      --ids ID1,ID2,ID3            Delete only specific IDs of the specified type (comma-separated rkeys)"
-    puts "      --exclude-ids ID1,ID2,ID3    Exclude specific IDs from deletion (comma-separated rkeys)"
+    puts "      --ids ID1,ID2,ID3            Delete only specific IDs of the specified type (comma-separated)"
+    puts "      --exclude-ids ID1,ID2,ID3    Exclude specific IDs from deletion (comma-separated)"
     puts "  -h, --help                       Show this help message"
     puts "  -v, --version                    Show version"
     puts ""
     puts "Examples:"
-    puts "  #{$0} posts likes -n                           # Show old posts and likes (dry run)"
-    puts "  #{$0} replies --days 30 -f                     # Delete replies older than 30 days"
-    puts "  #{$0} posts --start-date 2024-01-01 -f         # Delete posts but keep everything since 2024"
-    puts "  #{$0} likes --ids abc123,def456                # Delete only specific like IDs"
+    puts "  #{$0} posts likes -n                                    # Show old posts and likes (dry run)"
+    puts "  #{$0} replies --days 30 -f                              # Delete replies older than 30 days"
+    puts "  #{$0} posts --start-date 2024-01-01 -f                  # Delete posts but keep everything since 2024"
+    puts "  #{$0} likes --ids abc123,def456                         # Delete only specific like IDs"
+    puts "  #{$0} posts -p mastodon -n                              # Show old Mastodon posts (dry run)"
+    puts ""
+    puts "Environment variables:"
+    puts "  Bluesky:  BLUESKY_HANDLE, BLUESKY_APP_PASSWORD"
+    puts "  Mastodon: MASTODON_INSTANCE, MASTODON_ACCESS_TOKEN"
   end
 end
 
