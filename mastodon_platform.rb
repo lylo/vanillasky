@@ -191,36 +191,19 @@ class MastodonPlatform
   end
 
   def delete_post(status_id)
-    uri = URI("https://#{@instance}/api/v1/statuses/#{status_id}")
-    http = create_http(uri)
-
-    request = Net::HTTP::Delete.new(uri)
-    request['Authorization'] = "Bearer #{@access_token}"
-
-    response = http.request(request)
-    response.code == '200'
+    request_with_retry(:delete, "/api/v1/statuses/#{status_id}")
   end
 
   def delete_like(status_id)
-    uri = URI("https://#{@instance}/api/v1/statuses/#{status_id}/unfavourite")
-    http = create_http(uri)
-
-    request = Net::HTTP::Post.new(uri)
-    request['Authorization'] = "Bearer #{@access_token}"
-
-    response = http.request(request)
-    response.code == '200'
+    request_with_retry(:post, "/api/v1/statuses/#{status_id}/unfavourite")
   end
 
   def delete_repost(status_id)
-    uri = URI("https://#{@instance}/api/v1/statuses/#{status_id}/unreblog")
-    http = create_http(uri)
+    request_with_retry(:post, "/api/v1/statuses/#{status_id}/unreblog")
+  end
 
-    request = Net::HTTP::Post.new(uri)
-    request['Authorization'] = "Bearer #{@access_token}"
-
-    response = http.request(request)
-    response.code == '200'
+  def delete_delay
+    1.0
   end
 
   def item_id(item)
@@ -228,6 +211,32 @@ class MastodonPlatform
   end
 
   private
+
+  def request_with_retry(method, path, retries: 3)
+    retries.times do |attempt|
+      uri = URI("https://#{@instance}#{path}")
+      http = create_http(uri)
+
+      request = case method
+                when :delete then Net::HTTP::Delete.new(uri)
+                when :post then Net::HTTP::Post.new(uri)
+                end
+      request['Authorization'] = "Bearer #{@access_token}"
+
+      response = http.request(request)
+
+      if response.code == '429'
+        wait = (response['Retry-After'] || 30).to_i
+        puts "⏳ Rate limited, waiting #{wait}s..."
+        sleep(wait)
+        next
+      end
+
+      return response.code == '200'
+    end
+
+    false
+  end
 
   def paginate(path, params = {})
     url = "https://#{@instance}#{path}"

@@ -10,9 +10,10 @@ require 'openssl'
 
 require_relative 'bluesky_platform'
 require_relative 'mastodon_platform'
+require_relative 'x_platform'
 
 class VanillaSky
-  VERSION = '0.3.0'
+  VERSION = '0.4.0'
 
   def initialize
     @platform = nil
@@ -26,6 +27,7 @@ class VanillaSky
     @specific_ids = []
     @exclude_ids = []
     @start_date = nil
+    @archive_path = nil
   end
 
   def run(args)
@@ -105,9 +107,11 @@ class VanillaSky
       BlueskyPlatform.new
     when 'mastodon'
       MastodonPlatform.new
+    when 'x'
+      XPlatform.new(@archive_path)
     else
       puts "❌ Error: Unknown platform '#{@platform_name}'"
-      puts "   Valid platforms: bluesky, mastodon"
+      puts "   Valid platforms: bluesky, mastodon, x"
       exit 1
     end
   end
@@ -163,8 +167,12 @@ class VanillaSky
     OptionParser.new do |opts|
       opts.banner = "Usage: #{$0} [posts|replies|likes|reposts] [options]"
 
-      opts.on("-p", "--platform PLATFORM", "Platform to use: bluesky (default), mastodon") do |platform|
+      opts.on("-p", "--platform PLATFORM", "Platform to use: bluesky (default), mastodon, x") do |platform|
         @platform_name = platform.downcase
+      end
+
+      opts.on("-a", "--archive PATH", "Path to extracted archive directory (required for X)") do |path|
+        @archive_path = path
       end
 
       opts.on("-d", "--days DAYS", Integer, "Delete content older than DAYS (default: 90)") do |days|
@@ -291,7 +299,7 @@ class VanillaSky
           puts "❌ Failed to delete: #{post[:created_at].strftime('%Y-%m-%d')} - #{post[:text]}"
         end
 
-        sleep(0.5)
+        sleep(@platform.delete_delay)
       end
     end
 
@@ -317,7 +325,7 @@ class VanillaSky
           puts "❌ Failed to delete reply: #{reply[:created_at].strftime('%Y-%m-%d')} - #{reply[:text]}"
         end
 
-        sleep(0.5)
+        sleep(@platform.delete_delay)
       end
     end
 
@@ -343,7 +351,7 @@ class VanillaSky
           puts "❌ Failed to delete like: #{like[:created_at].strftime('%Y-%m-%d')}"
         end
 
-        sleep(0.5)
+        sleep(@platform.delete_delay)
       end
     end
 
@@ -369,7 +377,7 @@ class VanillaSky
           puts "❌ Failed to delete repost: #{repost[:created_at].strftime('%Y-%m-%d')}"
         end
 
-        sleep(0.5)
+        sleep(@platform.delete_delay)
       end
     end
 
@@ -391,7 +399,8 @@ class VanillaSky
     puts "  (You can specify multiple commands)"
     puts ""
     puts "Options:"
-    puts "  -p, --platform PLATFORM          Platform to use: bluesky (default), mastodon"
+    puts "  -p, --platform PLATFORM          Platform to use: bluesky (default), mastodon, x"
+    puts "  -a, --archive PATH               Path to extracted archive directory (required for X)"
     puts "  -d, --days DAYS                  Delete content older than DAYS (default: 90)"
     puts "  -s, --start-date DATE            Don't delete anything before this date (YYYY-MM-DD)"
     puts "  -n, --dry-run                    Show what would be deleted without actually deleting (default)"
@@ -407,10 +416,12 @@ class VanillaSky
     puts "  #{$0} posts --start-date 2024-01-01 -f                  # Delete posts but keep everything since 2024"
     puts "  #{$0} likes --ids abc123,def456                         # Delete only specific like IDs"
     puts "  #{$0} posts -p mastodon -n                              # Show old Mastodon posts (dry run)"
+    puts "  #{$0} posts -p x --archive ~/x-archive -n              # Show old X/Twitter posts (dry run)"
     puts ""
     puts "Environment variables:"
     puts "  Bluesky:  BLUESKY_HANDLE, BLUESKY_APP_PASSWORD"
     puts "  Mastodon: MASTODON_INSTANCE, MASTODON_ACCESS_TOKEN"
+    puts "  X:        X_API_KEY, X_API_KEY_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET"
   end
 end
 

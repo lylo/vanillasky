@@ -329,6 +329,10 @@ class BlueskyPlatform
     delete_record('app.bsky.feed.repost', rkey)
   end
 
+  def delete_delay
+    0.5
+  end
+
   def item_id(item)
     item[:uri].split('/').last
   end

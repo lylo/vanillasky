@@ -1,22 +1,24 @@
 # VanillaSky
 
-A Ruby tool to selectively delete content from your Bluesky or Mastodon account.
+A Ruby tool to selectively delete content from your Bluesky, Mastodon, or X (Twitter) account.
 
 ## Features
 
 - 🗑️ **Selective Deletion**: Choose what to delete - posts, replies, likes, reposts, or any combination
-- 🌐 **Multi-platform**: Supports both Bluesky and Mastodon
+- 🌐 **Multi-platform**: Supports Bluesky, Mastodon, and X (Twitter)
 - ⏰ **Time-based**: Delete content older than a specified number of days (default: 90 days)
 - 🎯 **ID-based**: Target specific posts by their IDs
 - 🚫 **Exclude Lists**: Protect specific posts from deletion with exclude-ids
 - 🔍 **Dry-run Mode**: Preview what would be deleted before committing (enabled by default)
-- 🔐 **Secure**: Uses app passwords (Bluesky) or access tokens (Mastodon) for authentication
+- 📦 **Archive Support**: Import your X data archive to find and delete old tweets
+- 🔐 **Secure**: Uses app passwords (Bluesky), access tokens (Mastodon), or OAuth 1.0a (X) for authentication
 - 📊 **Detailed Output**: Progress tracking and comprehensive logging
 
 ## Prerequisites
 
 - Ruby 3.0 or higher
-- A Bluesky and/or Mastodon account
+- A Bluesky, Mastodon, and/or X account
+- For X: a downloaded data archive (request at [x.com/settings/download_your_data](https://x.com/settings/download_your_data))
 
 ## Installation
 
@@ -63,12 +65,15 @@ Delete only replies (preview only):
 
 ### Choosing a Platform
 
-By default VanillaSky uses Bluesky. Use `--platform` / `-p` to switch to Mastodon:
+By default VanillaSky uses Bluesky. Use `--platform` / `-p` to switch:
 
 ```bash
 ./vanillasky.rb posts -p mastodon
 ./vanillasky.rb posts likes -p mastodon --days 30
+./vanillasky.rb posts -p x --archive ~/path/to/x-archive
 ```
+
+The X platform requires the `--archive` flag pointing to your extracted X data archive directory.
 
 ### Actually Delete Content
 
@@ -77,6 +82,7 @@ Add `--force` to perform actual deletions:
 ./vanillasky.rb posts --force
 ./vanillasky.rb posts replies likes --force
 ./vanillasky.rb posts -p mastodon --force
+./vanillasky.rb posts likes -p x --archive ~/x-archive --force
 ```
 
 ### Custom Time Periods
@@ -109,8 +115,8 @@ Delete posts but protect certain ones:
 
 - **`posts`**: Top-level posts (not replies to other posts)
 - **`replies`**: Your replies to other people's posts
-- **`likes`**: Posts you've liked (Bluesky likes / Mastodon favourites)
-- **`reposts`**: Posts you've reposted/shared (Bluesky reposts / Mastodon boosts)
+- **`likes`**: Posts you've liked (Bluesky likes / Mastodon favourites / X likes)
+- **`reposts`**: Posts you've reposted/shared (Bluesky reposts / Mastodon boosts / X retweets)
 
 You can specify multiple types in one command:
 ```bash
@@ -165,6 +171,42 @@ MASTODON_ACCESS_TOKEN=your-access-token-here
 
 If no environment variables are set, you'll be prompted for your instance URL and access token.
 
+### X (Twitter)
+
+X requires two things: **API credentials** for deleting content, and a **data archive** for finding your old content (since the X API no longer allows free listing of tweets).
+
+#### Getting Your Data Archive
+
+1. Go to [x.com/settings/download_your_data](https://x.com/settings/download_your_data)
+2. Request your archive and wait for the email (can take 24+ hours)
+3. Download and extract the ZIP file
+4. Pass the extracted directory to VanillaSky with `--archive`
+
+The archive should contain a `data/` directory with files like `tweets.js` and `like.js`.
+
+#### Getting API Credentials
+
+1. Go to the [X Developer Portal](https://developer.x.com/en/portal/dashboard)
+2. Create a project and app (the free tier works for deletion)
+3. On the app creation screen you'll see your **API Key**, **API Key Secret**, and **Bearer Token** — save the first two (Bearer Token is not needed)
+4. Under **User authentication settings**, enable **OAuth 1.0a** with **Read and write** permissions
+5. Go to your app's **Keys and tokens** tab
+6. Under **Authentication Tokens**, click **Generate** to create your **Access Token and Secret** — save both
+
+#### Environment Variables (Recommended)
+
+Add to your `.env` file:
+```env
+X_API_KEY=your-api-key-here
+X_API_KEY_SECRET=your-api-key-secret-here
+X_ACCESS_TOKEN=your-access-token-here
+X_ACCESS_TOKEN_SECRET=your-access-token-secret-here
+```
+
+#### Interactive Prompts
+
+If no environment variables are set, you'll be prompted for all four credentials.
+
 ## Command Line Options
 
 ### Commands
@@ -174,7 +216,8 @@ If no environment variables are set, you'll be prompted for your instance URL an
 - `reposts` - Delete reposts / boosts
 
 ### Options
-- `-p, --platform PLATFORM` - Platform to use: `bluesky` (default) or `mastodon`
+- `-p, --platform PLATFORM` - Platform to use: `bluesky` (default), `mastodon`, or `x`
+- `-a, --archive PATH` - Path to extracted archive directory (required for X)
 - `-d, --days DAYS` - Delete content older than DAYS (default: 90)
 - `-s, --start-date DATE` - Don't delete anything before this date (YYYY-MM-DD)
 - `-n, --dry-run` - Show what would be deleted without deleting (default)
@@ -210,6 +253,20 @@ If no environment variables are set, you'll be prompted for your instance URL an
 ./vanillasky.rb reposts -p mastodon --days 14 --force
 ```
 
+### Clean up old X tweets
+```bash
+# Preview
+./vanillasky.rb posts -p x --archive ~/x-archive --days 60
+
+# Execute
+./vanillasky.rb posts -p x --archive ~/x-archive --days 60 --force
+```
+
+### Delete all X likes and retweets older than 90 days
+```bash
+./vanillasky.rb likes reposts -p x --archive ~/x-archive --force
+```
+
 ## Safety Features
 
 - 🔒 Secure authentication with app passwords / access tokens
@@ -242,16 +299,17 @@ If no environment variables are set, you'll be prompted for your instance URL an
 
 ## How It Works
 
-1. **Platform Selection**: Picks Bluesky or Mastodon based on `--platform` flag
+1. **Platform Selection**: Picks Bluesky, Mastodon, or X based on `--platform` flag
 2. **Authentication**: Connects using your credentials
 3. **Command Parsing**: Determines what content types to process
-4. **Scanning**: Fetches your content in batches, checking dates and types
+4. **Scanning**: Fetches your content via API (Bluesky/Mastodon) or from your data archive (X)
 5. **Filtering**: Applies time thresholds and exclude lists
 6. **Preview/Execution**: Shows what would be deleted or performs deletions
 7. **Rate Limiting**: Processes deletions with delays to respect API limits
 
 ## Version History
 
+- **v0.4.0**: X (Twitter) support via data archive + API
 - **v0.3.0**: Mastodon support, platform abstraction
 - **v0.2.1**: Fix SSL certificate CRL verification errors on Ruby 3.4+
 - **v0.2**: Command-based interface, replies support, exclude-ids functionality
@@ -263,12 +321,17 @@ If no environment variables are set, you'll be prompted for your instance URL an
 - All API communications use HTTPS
 - Bluesky app passwords have limited scope and can be revoked anytime
 - Mastodon access tokens can be revoked from your instance's Development settings
+- X OAuth tokens can be revoked from the Developer Portal
+- X data archives are read locally and never uploaded anywhere
 
 ## Limitations
 
 - Processes content sequentially to respect rate limits
 - Cannot recover deleted content
 - Some very old content might not be accessible via the API
+- X requires a data archive since the API no longer supports free listing of tweets
+- X like dates are estimated from tweet IDs (snowflake timestamps), not the date you liked them
+- X API free tier has strict rate limits (50 tweet deletions per 15 minutes)
 
 ## Contributing
 
