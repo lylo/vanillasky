@@ -203,7 +203,10 @@ class MastodonPlatform
   end
 
   def delete_delay
-    1.0
+    # Mastodon rate limit: 30 deletes per 30 minutes for statuses/unreblog,
+    # unfavourites fall under the general 300/5min limit.
+    # Pace conservatively to avoid constant 429s; retry logic handles bursts.
+    5.0
   end
 
   def item_id(item)
@@ -212,7 +215,7 @@ class MastodonPlatform
 
   private
 
-  def request_with_retry(method, path, retries: 3)
+  def request_with_retry(method, path, retries: 5)
     retries.times do |attempt|
       uri = URI("https://#{@instance}#{path}")
       http = create_http(uri)
