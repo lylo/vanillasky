@@ -11,6 +11,7 @@ A Ruby tool to selectively delete content from your Bluesky, Mastodon, or X (Twi
 - 🚫 **Exclude Lists**: Protect specific posts from deletion with exclude-ids
 - 🔍 **Dry-run Mode**: Preview what would be deleted before committing (enabled by default)
 - 📦 **Archive Support**: Import your X data archive to find and delete old tweets
+- 🖥️ **Browser Console Script**: Clean up X without API access by pasting `x_console.js` into the x.com console
 - 🔐 **Secure**: Uses app passwords (Bluesky), access tokens (Mastodon), or OAuth 1.0a (X) for authentication
 - 📊 **Detailed Output**: Progress tracking and comprehensive logging
 
@@ -18,7 +19,7 @@ A Ruby tool to selectively delete content from your Bluesky, Mastodon, or X (Twi
 
 - Ruby 3.0 or higher
 - A Bluesky, Mastodon, and/or X account
-- For X: a downloaded data archive (request at [x.com/settings/download_your_data](https://x.com/settings/download_your_data))
+- For the X CLI: a downloaded data archive (request at [x.com/settings/download_your_data](https://x.com/settings/download_your_data)). The X browser console script needs neither Ruby nor an archive.
 
 ## Installation
 
@@ -173,7 +174,52 @@ If no environment variables are set, you'll be prompted for your instance URL an
 
 ### X (Twitter)
 
-X requires two things: **API credentials** for deleting content, and a **data archive** for finding your old content (since the X API no longer allows free listing of tweets).
+There are two ways to clean up X. The **browser console script** is the easiest and needs no API access or archive. The **CLI** works like the other platforms but needs API credentials and a data archive.
+
+#### Option 1: Browser console script (recommended)
+
+`x_console.js` drives the x.com web UI for you: it scrolls your profile, finds content older than the cutoff and clicks Delete / Undo repost / Unlike exactly as you would by hand. No API keys, no archive, and it can remove likes (which the free API tier cannot).
+
+1. Log in to [x.com](https://x.com) and open the tab you want to clean up:
+   - `https://x.com/<you>` — posts (and reposts, if enabled)
+   - `https://x.com/<you>/with_replies` — posts **and** replies
+   - `https://x.com/<you>/likes` — likes
+2. Open the developer console (`Cmd+Option+J` on Mac, `Ctrl+Shift+J` elsewhere). Chrome will ask you to type `allow pasting` the first time.
+3. Open `x_console.js`, edit the `CONFIG` block at the top (days, exclude IDs, which types, and `DRY_RUN`), then paste the whole file into the console and press Enter.
+4. Watch the log. Run `vanillasky.stop()` in the console to halt early.
+
+```js
+const CONFIG = {
+  DRY_RUN: true,          // false to really delete
+  DAYS: 60,               // delete content older than this many days
+  START_DATE: null,       // 'YYYY-MM-DD' — never delete anything before this date
+  EXCLUDE_IDS: [],        // tweet IDs to keep
+  POSTS: true,            // your own tweets (and replies on the with_replies tab)
+  REPOSTS: false,         // undo your reposts
+  LIKES: true,            // unlike (only acts on the /likes tab)
+  SKIP_PINNED: true,      // leave your pinned post alone
+  SKIP_BOOKMARKED: true,  // leave anything you have bookmarked alone
+  SKIP_LIKED: true,       // leave your own posts that you have liked alone
+  MAX_ACTIONS: Infinity,  // stop after this many deletions
+  DELAY_MS: 1500,         // pause between deletions
+  // ...
+};
+```
+
+Bookmarking or liking one of your own posts is a quick way to protect it without editing `EXCLUDE_IDS`: `SKIP_BOOKMARKED` and `SKIP_LIKED` are on by default. (`SKIP_LIKED` only applies to your own posts, so it does nothing on the likes tab.)
+
+Dry run is the default, so the first paste only lists what *would* go. Set `DRY_RUN: false` and paste again to delete for real. Keep the tab in the foreground while it runs; the X UI only renders tweets that are near the viewport.
+
+Caveats:
+
+- The web UI shows the *original* post's date for reposts and likes, so that is the date used for the cutoff (the archive-based CLI has the same limitation for likes).
+- The UI cannot reliably tell a reply from a post, so `POSTS` means "your own tweets on the current tab". Use the Posts & replies tab to include replies.
+- Menu items are matched by their text. If your X UI is not in English, set `DELETE_LABEL` to the label of the Delete menu item.
+- X changes its markup from time to time. The script relies on `data-testid` attributes (`tweet`, `caret`, `unretweet`, `unlike`, `confirmationSheetConfirm`) which have been stable for years, but if it stops finding anything, that is the first place to look.
+
+#### Option 2: CLI with API credentials and data archive
+
+The CLI requires two things: **API credentials** for deleting content, and a **data archive** for finding your old content (since the X API no longer allows free listing of tweets). Note that the free API tier cannot delete likes.
 
 #### Getting Your Data Archive
 
@@ -253,7 +299,11 @@ If no environment variables are set, you'll be prompted for all four credentials
 ./vanillasky.rb reposts -p mastodon --days 14 --force
 ```
 
-### Clean up old X tweets
+### Clean up old X tweets from the browser
+
+Open `https://x.com/<you>`, paste `x_console.js` into the console with `DRY_RUN: true`, check the list, then paste again with `DRY_RUN: false`. For likes, do the same on `https://x.com/<you>/likes`.
+
+### Clean up old X tweets with the CLI
 ```bash
 # Preview
 ./vanillasky.rb posts -p x --archive ~/x-archive --days 60
@@ -309,6 +359,7 @@ If no environment variables are set, you'll be prompted for all four credentials
 
 ## Version History
 
+- **v0.5.0**: X browser console script (`x_console.js`) — no API or archive needed
 - **v0.4.0**: X (Twitter) support via data archive + API
 - **v0.3.0**: Mastodon support, platform abstraction
 - **v0.2.1**: Fix SSL certificate CRL verification errors on Ruby 3.4+
@@ -331,7 +382,8 @@ If no environment variables are set, you'll be prompted for all four credentials
 - Some very old content might not be accessible via the API
 - X requires a data archive since the API no longer supports free listing of tweets
 - X like dates are estimated from tweet IDs (snowflake timestamps), not the date you liked them
-- X API free tier has strict rate limits (50 tweet deletions per 15 minutes)
+- X API free tier has strict rate limits (50 tweet deletions per 15 minutes) and cannot delete likes — use `x_console.js` for those
+- `x_console.js` depends on the x.com markup and may need updating when X changes its UI
 
 ## Contributing
 

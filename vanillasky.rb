@@ -13,7 +13,7 @@ require_relative 'mastodon_platform'
 require_relative 'x_platform'
 
 class VanillaSky
-  VERSION = '0.4.0'
+  VERSION = '0.5.0'
 
   def initialize
     @platform = nil

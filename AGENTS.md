@@ -38,6 +38,8 @@ Unlike Bluesky and Mastodon, X does not offer a free API to list tweets. Instead
 
 Likes in the archive don't have timestamps, so dates are derived from Twitter snowflake IDs.
 
+The X API free tier cannot delete likes and has tight rate limits, so there is also `x_console.js`: a standalone browser script the user pastes into the x.com developer console. It does not use the Ruby platform interface. It scrolls the profile / with_replies / likes tab, parses each `article[data-testid="tweet"]` (status link + `time[datetime]` for ID and date, `socialContext` + `unretweet` button for reposts), and clicks the UI controls (`caret` → "Delete" menu item → `confirmationSheetConfirm`; `unretweet` → `unretweetConfirm`; `unlike`). Config lives in the `CONFIG` object at the top of the file; dry run is the default. Reference markup for the selectors was taken from a saved x.com page; there is no automated test for it in the repo.
+
 ## Running Tests
 
 ```bash

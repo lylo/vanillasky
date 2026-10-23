@@ -112,7 +112,7 @@ class VanillaSkyTest < Minitest::Test
   end
 
   def test_version
-    assert_equal '0.4.0', VanillaSky::VERSION
+    assert_equal '0.5.0', VanillaSky::VERSION
   end
 
   def test_bluesky_item_id
