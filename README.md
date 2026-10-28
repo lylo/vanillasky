@@ -183,6 +183,7 @@ There are two ways to clean up X. The **browser console script** is the easiest 
 1. Log in to [x.com](https://x.com) and open the tab you want to clean up:
    - `https://x.com/<you>` — posts (and reposts, if enabled)
    - `https://x.com/<you>/with_replies` — posts **and** replies
+   - `https://x.com/<you>/reposts` — reposts only, including reposts of your own posts (needs `REPOSTS: true`)
    - `https://x.com/<you>/likes` — likes
 2. Open the developer console (`Cmd+Option+J` on Mac, `Ctrl+Shift+J` elsewhere). Chrome will ask you to type `allow pasting` the first time.
 3. Open `x_console.js`, edit the `CONFIG` block at the top (days, exclude IDs, which types, and `DRY_RUN`), then paste the whole file into the console and press Enter.

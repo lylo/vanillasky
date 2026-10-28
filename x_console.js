@@ -11,6 +11,7 @@
 //        https://x.com/<you>               -> posts (and your reposts)
 //        https://x.com/<you>/with_replies  -> posts AND replies
 //        https://x.com/<you>/likes         -> likes
+//        https://x.com/<you>/reposts       -> reposts only (needs REPOSTS: true)
 //   3. Open the developer console (Cmd+Option+J / Ctrl+Shift+J).
 //      Chrome asks you to type "allow pasting" the first time.
 //   4. Edit CONFIG below, paste the whole file into the console, press Enter.
@@ -70,6 +71,7 @@
   const path = location.pathname.replace(/\/+$/, '').toLowerCase();
   const [pathHandle, pathTab] = path.split('/').filter(Boolean);
   const onLikes = pathTab === 'likes';
+  const onReposts = pathHandle === me && pathTab === 'reposts';
   const onProfile = pathHandle === me && (!pathTab || pathTab === 'with_replies');
 
   // Anything posted on or before the cutoff day is fair game (same as the CLI).
@@ -124,15 +126,32 @@
 
     let type = null;
     if (onLikes) type = article.querySelector('[data-testid="unlike"]') ? 'like' : null;
+    // Everything on the reposts tab is a repost — including reposts of your own posts.
+    else if (onReposts) type = article.querySelector('[data-testid="unretweet"]') ? 'repost' : null;
     else if (isRepost) type = 'repost';
     else if (author === me) type = 'post';
 
     return { article, id, author, date, text, type, isPinned, isBookmarked, isLiked };
   }
 
+  // X re-renders (and recycles) timeline cells as things change, so never hold on
+  // to an article element for long — look it up again by tweet ID before acting.
+  function findArticle(id) {
+    return Array.from(document.querySelectorAll('article[data-testid="tweet"]'))
+      .find((a) => parseArticle(a)?.id === id) || null;
+  }
+
+  function nextItem() {
+    for (const article of document.querySelectorAll('article[data-testid="tweet"]')) {
+      const it = parseArticle(article);
+      if (it && !seen.has(it.id)) return it;
+    }
+    return null;
+  }
+
   // ---- Actions ---------------------------------------------------------------
 
-  async function deleteOwnTweet({ article }) {
+  async function deleteOwnTweet({ id, article }) {
     const caret = article.querySelector('[data-testid="caret"]');
     if (!caret) return false;
     caret.click();
@@ -147,7 +166,7 @@
     if (!confirm) { pressEscape(); return false; }
     confirm.click();
 
-    return !!(await waitFor(() => !article.isConnected));
+    return !!(await waitFor(() => !findArticle(id), 8000));
   }
 
   async function undoRepost({ article }) {
@@ -159,14 +178,14 @@
     if (!item) { pressEscape(); return false; }
     item.click();
 
-    return !!(await waitFor(() => !article.isConnected || article.querySelector('[data-testid="retweet"]')));
+    return !!(await waitFor(() => !article.isConnected || article.querySelector('[data-testid="retweet"]'), 8000));
   }
 
   async function unlike({ article }) {
     const btn = article.querySelector('[data-testid="unlike"]');
     if (!btn) return false;
     btn.click();
-    return !!(await waitFor(() => !article.isConnected || article.querySelector('[data-testid="like"]')));
+    return !!(await waitFor(() => !article.isConnected || article.querySelector('[data-testid="like"]'), 8000));
   }
 
   const ACTIONS = {
@@ -201,7 +220,8 @@
 
     item.article.scrollIntoView({ block: 'center' });
     await sleep(200);
-    const ok = await action.run(item);
+    const article = findArticle(id);
+    const ok = !!article && await action.run({ ...item, article });
     if (ok) {
       log(`🗑️ Deleted ${action.label} ${prefix}`);
       stats[action.stat]++;
@@ -216,49 +236,42 @@
 
   async function run() {
     if (!me) { log('❌ Could not work out who you are — are you logged in?'); return; }
-    if (!onLikes && !onProfile) {
-      log(`❌ Open https://x.com/${me}, https://x.com/${me}/with_replies or https://x.com/${me}/likes first.`);
+    if (!onLikes && !onReposts && !onProfile) {
+      log(`❌ Open https://x.com/${me}, https://x.com/${me}/with_replies, https://x.com/${me}/reposts or https://x.com/${me}/likes first.`);
       return;
     }
     if (onLikes && !CONFIG.LIKES) { log('❌ On the likes tab but LIKES is false. Nothing to do.'); return; }
+    if (onReposts && !CONFIG.REPOSTS) { log('❌ On the reposts tab but REPOSTS is false. Nothing to do.'); return; }
 
-    log(`Logged in as @${me} on the ${onLikes ? 'likes' : pathTab === 'with_replies' ? 'posts & replies' : 'posts'} tab`);
+    log(`Logged in as @${me} on the ${onLikes ? 'likes' : onReposts ? 'reposts' : pathTab === 'with_replies' ? 'posts & replies' : 'posts'} tab`);
     log(CONFIG.DRY_RUN ? '🔍 DRY RUN MODE - Nothing will be deleted' : '⚠️ LIVE MODE - content WILL be deleted');
     log(`🔍 Looking for content older than ${fmt(cutoff)}${startDate ? ` and on/after ${fmt(startDate)}` : ''}`);
     if (excluded.size) log(`🚫 Excluding ${excluded.size} IDs: ${[...excluded].join(', ')}`);
 
     let idle = 0;
     while (running && total() < CONFIG.MAX_ACTIONS) {
-      const fresh = Array.from(document.querySelectorAll('article[data-testid="tweet"]'))
-        .map(parseArticle)
-        .filter((it) => it && !seen.has(it.id));
+      // Re-scan the DOM for every item: each deletion re-renders the timeline.
+      const item = nextItem();
 
-      if (fresh.length === 0) {
+      if (!item) {
         clickRetry();
         if (++idle >= CONFIG.SCROLL_IDLE_LIMIT) break;
-        window.scrollBy(0, window.innerHeight * 0.8);
+        const articles = document.querySelectorAll('article[data-testid="tweet"]');
+        articles[articles.length - 1]?.scrollIntoView({ block: 'end' });
+        window.scrollBy(0, 300);
         await sleep(1000);
         continue;
       }
       idle = 0;
 
-      for (const item of fresh) {
-        if (!running || total() >= CONFIG.MAX_ACTIONS) break;
-        seen.add(item.id);
-        const result = await process(item);
-        // Profile timelines are reverse-chronological, so once an own post predates
-        // START_DATE everything further down will too.
-        if (result === 'before-start' && item.type === 'post' && !item.isPinned && !onLikes) {
-          log(`📅 Reached ${fmt(startDate)} — stopping.`);
-          running = false;
-          break;
-        }
+      seen.add(item.id);
+      const result = await process(item);
+      // Profile timelines are reverse-chronological, so once an own post predates
+      // START_DATE everything further down will too.
+      if (result === 'before-start' && item.type === 'post' && !item.isPinned && !onLikes) {
+        log(`📅 Reached ${fmt(startDate)} — stopping.`);
+        running = false;
       }
-
-      const articles = document.querySelectorAll('article[data-testid="tweet"]');
-      articles[articles.length - 1]?.scrollIntoView({ block: 'end' });
-      window.scrollBy(0, 300);
-      await sleep(800);
     }
 
     running = false;
