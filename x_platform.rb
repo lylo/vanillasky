@@ -6,6 +6,7 @@ require 'openssl'
 require 'base64'
 require 'securerandom'
 require 'tmpdir'
+require 'set'
 
 class XPlatform
   API_BASE = 'https://api.twitter.com'
@@ -222,6 +223,15 @@ class XPlatform
 
   def item_id(item)
     item[:uri]
+  end
+
+  def bookmarked?(item)
+    false
+  end
+
+  def liked_by_me?(item)
+    @liked_ids ||= load_likes.map { |like| like['tweetId'] }.to_set
+    @liked_ids.include?(item[:uri])
   end
 
   private

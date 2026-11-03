@@ -3,6 +3,7 @@ require 'json'
 require 'uri'
 require 'date'
 require 'openssl'
+require 'set'
 
 class BlueskyPlatform
   API_BASE = 'https://bsky.social/xrpc'
@@ -10,6 +11,8 @@ class BlueskyPlatform
   def initialize
     @access_token = nil
     @did = nil
+    @bookmarked_uris = nil
+    @self_liked_uris = nil
   end
 
   def platform_name
@@ -337,7 +340,61 @@ class BlueskyPlatform
     item[:uri].split('/').last
   end
 
+  def bookmarked?(item)
+    @bookmarked_uris ||= load_bookmarked_uris
+    @bookmarked_uris.include?(item[:uri])
+  end
+
+  def liked_by_me?(item)
+    @self_liked_uris ||= load_self_liked_uris
+    @self_liked_uris.include?(item[:uri])
+  end
+
   private
+
+  def load_bookmarked_uris
+    uris = Set.new
+    each_page('app.bsky.bookmark.getBookmarks', {}, 'bookmarks', 'bookmarks', '--no-keep-bookmarked') do |bookmark|
+      uris << bookmark.dig('subject', 'uri')
+    end
+    uris
+  end
+
+  def load_self_liked_uris
+    own_posts = "at://#{@did}/app.bsky.feed.post/"
+    uris = Set.new
+    params = { repo: @did, collection: 'app.bsky.feed.like' }
+    each_page('com.atproto.repo.listRecords', params, 'records', 'likes', '--no-keep-liked') do |record|
+      subject = record.dig('value', 'subject', 'uri')
+      uris << subject if subject&.start_with?(own_posts)
+    end
+    uris
+  end
+
+  def each_page(method, params, key, label, opt_out_flag)
+    cursor = nil
+
+    loop do
+      uri = URI("#{API_BASE}/#{method}")
+      uri.query = URI.encode_www_form(params.merge(limit: 100, cursor: cursor).compact)
+
+      request = Net::HTTP::Get.new(uri)
+      request['Authorization'] = "Bearer #{@access_token}"
+      response = create_http(uri).request(request)
+
+      if response.code != '200'
+        puts "❌ Failed to fetch your #{label}, so nothing has been deleted: #{response.body}"
+        puts "   Run with #{opt_out_flag} to delete without checking #{label}."
+        exit 1
+      end
+
+      data = JSON.parse(response.body)
+      data[key].each { |item| yield item }
+
+      cursor = data['cursor']
+      break unless cursor
+    end
+  end
 
   def delete_record(collection, rkey)
     uri = URI("#{API_BASE}/com.atproto.repo.deleteRecord")

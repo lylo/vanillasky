@@ -28,6 +28,8 @@ class VanillaSky
     @exclude_ids = []
     @start_date = nil
     @archive_path = nil
+    @keep_bookmarked = true
+    @keep_liked = true
   end
 
   def run(args)
@@ -62,6 +64,9 @@ class VanillaSky
       reposts = @delete_reposts ? @platform.fetch_old_reposts(cutoff_date, @start_date, @exclude_ids) : []
       likes = @delete_likes ? @platform.fetch_old_likes(cutoff_date, @start_date, @exclude_ids) : []
     end
+
+    posts = remove_kept(posts, 'post')
+    replies = remove_kept(replies, 'reply')
 
     if posts.empty? && replies.empty? && reposts.empty? && likes.empty?
       puts "✅ No content older than #{@days_threshold} days found."
@@ -204,6 +209,14 @@ class VanillaSky
         @exclude_ids = ids.map(&:strip)
       end
 
+      opts.on("--[no-]keep-bookmarked", "Keep posts and replies you have bookmarked (default: on)") do |keep|
+        @keep_bookmarked = keep
+      end
+
+      opts.on("--[no-]keep-liked", "Keep posts and replies you have liked yourself (default: on)") do |keep|
+        @keep_liked = keep
+      end
+
       opts.on("-h", "--help", "Show this help message") do
         show_usage
         exit
@@ -282,6 +295,22 @@ class VanillaSky
     end
 
     [posts, replies, reposts, likes]
+  end
+
+  def remove_kept(items, noun)
+    items.reject do |item|
+      reason = if @keep_bookmarked && @platform.bookmarked?(item)
+                 '🔖 Keeping bookmarked'
+               elsif @keep_liked && @platform.liked_by_me?(item)
+                 '❤️  Keeping liked'
+               end
+
+      if reason
+        puts "#{reason} #{noun} ID: #{@platform.item_id(item)} | #{item[:created_at].strftime('%Y-%m-%d')} - #{item[:text]}"
+      end
+
+      reason
+    end
   end
 
   def delete_posts(posts)
@@ -407,6 +436,8 @@ class VanillaSky
     puts "  -f, --force                      Actually delete content (required to disable dry-run mode)"
     puts "      --ids ID1,ID2,ID3            Delete only specific IDs of the specified type (comma-separated)"
     puts "      --exclude-ids ID1,ID2,ID3    Exclude specific IDs from deletion (comma-separated)"
+    puts "      --no-keep-bookmarked         Also delete posts and replies you have bookmarked"
+    puts "      --no-keep-liked              Also delete posts and replies you have liked yourself"
     puts "  -h, --help                       Show this help message"
     puts "  -v, --version                    Show version"
     puts ""

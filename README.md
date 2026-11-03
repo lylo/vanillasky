@@ -9,6 +9,7 @@ A Ruby tool to selectively delete content from your Bluesky, Mastodon, or X (Twi
 - ⏰ **Time-based**: Delete content older than a specified number of days (default: 90 days)
 - 🎯 **ID-based**: Target specific posts by their IDs
 - 🚫 **Exclude Lists**: Protect specific posts from deletion with exclude-ids
+- 🔖 **Keeps Favourites**: Posts and replies you've bookmarked or liked yourself are kept by default
 - 🔍 **Dry-run Mode**: Preview what would be deleted before committing (enabled by default)
 - 📦 **Archive Support**: Import your X data archive to find and delete old tweets
 - 🖥️ **Browser Console Script**: Clean up X without API access by pasting `x_console.js` into the x.com console
@@ -111,6 +112,15 @@ Delete posts but protect certain ones:
 ```bash
 ./vanillasky.rb posts --exclude-ids important123,keepme456 --force
 ```
+
+### Bookmarked and Self-Liked Posts
+
+Posts and replies you have bookmarked, or liked yourself, are kept by default. Each one kept is listed in the output. To delete them as well:
+```bash
+./vanillasky.rb posts replies --no-keep-bookmarked --no-keep-liked --force
+```
+
+On X the archive has no bookmarks, so only self-liked tweets are kept (the `x_console.js` script skips both). If VanillaSky can't fetch your Bluesky bookmarks or likes, it stops without deleting anything.
 
 ## Content Types
 
@@ -271,6 +281,8 @@ If no environment variables are set, you'll be prompted for all four credentials
 - `-f, --force` - Actually delete content (required to disable dry-run)
 - `--ids ID1,ID2,ID3` - Delete only specific IDs of the specified type
 - `--exclude-ids ID1,ID2,ID3` - Exclude specific IDs from deletion
+- `--no-keep-bookmarked` - Also delete posts and replies you have bookmarked
+- `--no-keep-liked` - Also delete posts and replies you have liked yourself
 - `-h, --help` - Show help message
 - `-v, --version` - Show version
 

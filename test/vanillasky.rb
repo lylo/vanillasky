@@ -192,6 +192,65 @@ class VanillaSkyTest < Minitest::Test
       end
     end
   end
+  def test_keeps_bookmarked_and_liked_by_default
+    assert_equal true, @vs.instance_variable_get(:@keep_bookmarked)
+    assert_equal true, @vs.instance_variable_get(:@keep_liked)
+  end
+
+  def test_parse_options_no_keep_bookmarked_and_liked
+    @vs.send(:parse_options, ['--no-keep-bookmarked', '--no-keep-liked'])
+    assert_equal false, @vs.instance_variable_get(:@keep_bookmarked)
+    assert_equal false, @vs.instance_variable_get(:@keep_liked)
+  end
+
+  def test_remove_kept_drops_bookmarked_and_liked_items
+    @vs.instance_variable_set(:@platform, MastodonPlatform.new)
+    items = [
+      { uri: '1', created_at: DateTime.now, text: 'plain' },
+      { uri: '2', created_at: DateTime.now, text: 'bookmarked', bookmarked: true },
+      { uri: '3', created_at: DateTime.now, text: 'liked', liked: true }
+    ]
+
+    kept = nil
+    out, = capture_io { kept = @vs.send(:remove_kept, items, 'post') }
+
+    assert_equal ['1'], kept.map { |i| i[:uri] }
+    assert_match(/Keeping bookmarked post ID: 2/, out)
+    assert_match(/Keeping liked post ID: 3/, out)
+  end
+
+  def test_remove_kept_respects_opt_outs
+    @vs.instance_variable_set(:@platform, MastodonPlatform.new)
+    @vs.send(:parse_options, ['--no-keep-bookmarked', '--no-keep-liked'])
+    items = [
+      { uri: '2', created_at: DateTime.now, bookmarked: true },
+      { uri: '3', created_at: DateTime.now, liked: true }
+    ]
+
+    assert_equal 2, @vs.send(:remove_kept, items, 'post').length
+  end
+
+  def test_bluesky_liked_by_me_only_counts_likes_of_own_posts
+    platform = BlueskyPlatform.new
+    platform.instance_variable_set(:@did, 'did:plc:me')
+    platform.define_singleton_method(:each_page) do |_method, _params, _key, _label, _flag, &block|
+      block.call('value' => { 'subject' => { 'uri' => 'at://did:plc:me/app.bsky.feed.post/mine' } })
+      block.call('value' => { 'subject' => { 'uri' => 'at://did:plc:other/app.bsky.feed.post/theirs' } })
+    end
+
+    assert platform.liked_by_me?(uri: 'at://did:plc:me/app.bsky.feed.post/mine')
+    refute platform.liked_by_me?(uri: 'at://did:plc:me/app.bsky.feed.post/other')
+  end
+
+  def test_bluesky_bookmarked_uses_bookmark_subjects
+    platform = BlueskyPlatform.new
+    platform.define_singleton_method(:each_page) do |_method, _params, _key, _label, _flag, &block|
+      block.call('subject' => { 'uri' => 'at://did:plc:me/app.bsky.feed.post/saved' })
+    end
+
+    assert platform.bookmarked?(uri: 'at://did:plc:me/app.bsky.feed.post/saved')
+    refute platform.bookmarked?(uri: 'at://did:plc:me/app.bsky.feed.post/unsaved')
+  end
 end
 
 class XPlatformArchiveTest < Minitest::Test
@@ -321,6 +380,18 @@ class XPlatformArchiveTest < Minitest::Test
     record = platform.fetch_record_by_id('999', 'tweet')
 
     assert_nil record
+  end
+
+  def test_liked_by_me_uses_archive_likes
+    write_likes_js([{ 'tweetId' => '100' }])
+
+    platform = XPlatform.new(@archive_dir)
+
+    capture_io do
+      assert platform.liked_by_me?(uri: '100')
+      refute platform.liked_by_me?(uri: '101')
+    end
+    refute platform.bookmarked?(uri: '100')
   end
 
   private

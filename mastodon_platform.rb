@@ -65,7 +65,9 @@ class MastodonPlatform
         old_posts << {
           uri: status['id'],
           created_at: created_at,
-          text: (status['content'] || '').gsub(/<[^>]*>/, '').slice(0, 100)
+          text: (status['content'] || '').gsub(/<[^>]*>/, '').slice(0, 100),
+          bookmarked: status['bookmarked'],
+          liked: status['favourited']
         }
       end
     end
@@ -92,7 +94,9 @@ class MastodonPlatform
         old_replies << {
           uri: status['id'],
           created_at: created_at,
-          text: (status['content'] || '').gsub(/<[^>]*>/, '').slice(0, 100)
+          text: (status['content'] || '').gsub(/<[^>]*>/, '').slice(0, 100),
+          bookmarked: status['bookmarked'],
+          liked: status['favourited']
         }
       end
     end
@@ -162,7 +166,9 @@ class MastodonPlatform
 
       result = {
         uri: status['id'],
-        created_at: created_at
+        created_at: created_at,
+        bookmarked: status['bookmarked'],
+        liked: status['favourited']
       }
 
       if status['reblog']
@@ -211,6 +217,14 @@ class MastodonPlatform
 
   def item_id(item)
     item[:uri]
+  end
+
+  def bookmarked?(item)
+    item[:bookmarked] == true
+  end
+
+  def liked_by_me?(item)
+    item[:liked] == true
   end
 
   private

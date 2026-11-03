@@ -29,6 +29,7 @@ Every platform class must implement:
 - `delete_post(uri)`, `delete_like(uri)`, `delete_repost(uri)` — delete a single item, return boolean
 - `delete_delay` — seconds to sleep between deletions
 - `item_id(item)` — extract display ID from an item hash
+- `bookmarked?(item)`, `liked_by_me?(item)` — whether the user bookmarked or liked their own post/reply; `VanillaSky#remove_kept` drops these unless `--no-keep-bookmarked` / `--no-keep-liked`. Bluesky loads bookmarks and self-likes lazily on first call and exits rather than deleting if the fetch fails
 
 Item hashes use the keys `:uri`, `:created_at`, `:text` (optional), and `:reply` (optional).
 
